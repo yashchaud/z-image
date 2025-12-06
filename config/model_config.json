@@ -1,0 +1,36 @@
+{
+  "default_model": "z-image-turbo",
+  "models": {
+    "z-image-turbo": {
+      "model_id": "Tongyi-MAI/Z-Image-Turbo",
+      "pipeline_class": "ZImagePipeline",
+      "torch_dtype": "bfloat16",
+      "variant": null,
+      "scheduler": null,
+      "default_params": {
+        "guidance_scale": 0.0,
+        "num_inference_steps": 9,
+        "height": 1024,
+        "width": 1024
+      }
+    }
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "workers": 1,
+    "timeout": 300
+  },
+  "generation": {
+    "max_concurrent_requests": 4,
+    "queue_timeout": 120,
+    "enable_cpu_offload": false,
+    "enable_vae_slicing": true,
+    "enable_vae_tiling": true
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "json",
+    "include_timestamps": true
+  }
+}
