@@ -19,8 +19,12 @@ from PIL import Image
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 import structlog
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -112,6 +116,7 @@ class ModelManager:
 
             try:
                 from diffusers import (
+                    DiffusionPipeline,
                     AutoPipelineForText2Image,
                     AutoPipelineForImage2Image,
                     AutoPipelineForInpainting
@@ -126,14 +131,30 @@ class ModelManager:
 
                 cache_dir = os.environ.get("HF_HOME", "./models")
 
+                # Check if custom pipeline class is specified
+                custom_pipeline = config.get("pipeline_class")
+
                 # Load text-to-image pipeline
-                logger.info("loading_text2img_pipeline")
-                self.text2img_pipeline = AutoPipelineForText2Image.from_pretrained(
-                    model_id,
-                    torch_dtype=dtype,
-                    cache_dir=cache_dir,
-                    use_safetensors=True
-                )
+                logger.info("loading_text2img_pipeline", custom_pipeline=custom_pipeline)
+
+                if custom_pipeline:
+                    # Load custom pipeline with trust_remote_code
+                    self.text2img_pipeline = DiffusionPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=dtype,
+                        cache_dir=cache_dir,
+                        use_safetensors=True,
+                        trust_remote_code=True
+                    )
+                else:
+                    # Load standard Auto pipeline
+                    self.text2img_pipeline = AutoPipelineForText2Image.from_pretrained(
+                        model_id,
+                        torch_dtype=dtype,
+                        cache_dir=cache_dir,
+                        use_safetensors=True
+                    )
+
                 self.text2img_pipeline = self.text2img_pipeline.to(self.device)
 
                 # Load image-to-image pipeline
@@ -164,8 +185,6 @@ class ModelManager:
                                 pipeline.enable_vae_slicing()
                             if config.get("enable_vae_tiling", True):
                                 pipeline.enable_vae_tiling()
-                            if config.get("enable_cpu_offload", False):
-                                pipeline.enable_model_cpu_offload()
                         except Exception as e:
                             logger.warning("optimization_failed", error=str(e))
 
@@ -247,7 +266,8 @@ class ImageGenerationRequest(BaseModel):
     negative_prompt: Optional[str] = Field(None, description="Negative prompt")
     seed: Optional[int] = Field(None, description="Random seed for reproducibility")
 
-    @validator('size')
+    @field_validator('size')
+    @classmethod
     def validate_size(cls, v):
         try:
             w, h = map(int, v.split('x'))

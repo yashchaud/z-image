@@ -29,6 +29,7 @@ services:
     environment:
       - MODEL_ID=${MODEL_ID:-Tongyi-MAI/Z-Image-Turbo}
       - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-0}
       - PORT=8000
       - HOST=0.0.0.0
       - WORKERS=1
