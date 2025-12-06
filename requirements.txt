@@ -1,9 +1,9 @@
 # Core FastFusion/Diffusers stack
 torch>=2.1.0
-diffusers>=0.27.0
-transformers>=4.38.0
-accelerate>=0.27.0
-safetensors>=0.4.0
+diffusers @ git+https://github.com/huggingface/diffusers
+transformers
+accelerate
+safetensors
 
 # API server
 fastapi>=0.109.0
