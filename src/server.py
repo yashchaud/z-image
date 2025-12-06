@@ -19,12 +19,20 @@ from PIL import Image
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 import structlog
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# ============================================================================
+# CONSTANTS
+# ============================================================================
+
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
+os.makedirs(ASSETS_DIR, exist_ok=True)
 
 # ============================================================================
 # LOGGING CONFIGURATION
@@ -62,6 +70,27 @@ def encode_image_to_base64(image: Image.Image, format: str = "PNG") -> str:
     buffer = BytesIO()
     image.save(buffer, format=format)
     return base64.b64encode(buffer.getvalue()).decode()
+
+def save_image_to_assets(image: Image.Image, prefix: str = "img") -> str:
+    """
+    Save image to assets folder and return the filename.
+
+    Args:
+        image: PIL Image to save
+        prefix: Prefix for the filename
+
+    Returns:
+        Filename of the saved image
+    """
+    timestamp = int(time.time() * 1000)
+    unique_id = str(uuid.uuid4())[:8]
+    filename = f"{prefix}_{timestamp}_{unique_id}.png"
+    filepath = os.path.join(ASSETS_DIR, filename)
+
+    image.save(filepath, format="PNG")
+    logger.info("image_saved", filename=filename, path=filepath)
+
+    return filename
 
 async def process_upload_file(file: UploadFile) -> Image.Image:
     """Process uploaded image file with validation."""
@@ -256,7 +285,7 @@ class ImageGenerationRequest(BaseModel):
     model: Optional[str] = Field(None, description="Model to use")
     n: int = Field(1, ge=1, le=4, description="Number of images")
     size: str = Field("1024x1024", description="Image size (WxH)")
-    response_format: Literal["b64_json"] = Field("b64_json", description="Response format")
+    response_format: Literal["url", "b64_json"] = Field("url", description="Response format")
     quality: Optional[str] = Field("standard", description="Image quality")
     style: Optional[str] = Field(None, description="Image style")
 
@@ -284,7 +313,7 @@ class ImageEditRequest(BaseModel):
     mask: Optional[str] = Field(None, description="Base64 encoded mask")
     n: int = Field(1, ge=1, le=4)
     size: Optional[str] = Field(None, description="Output size (WxH)")
-    response_format: Literal["b64_json"] = Field("b64_json")
+    response_format: Literal["url", "b64_json"] = Field("url")
 
     guidance_scale: Optional[float] = Field(None, ge=0.0, le=20.0)
     num_inference_steps: Optional[int] = Field(None, ge=1, le=100)
@@ -296,7 +325,7 @@ class ImageVariationRequest(BaseModel):
     image: str = Field(..., description="Base64 encoded image")
     n: int = Field(1, ge=1, le=4)
     size: Optional[str] = Field(None)
-    response_format: Literal["b64_json"] = Field("b64_json")
+    response_format: Literal["url", "b64_json"] = Field("url")
 
     strength: Optional[float] = Field(0.75, ge=0.0, le=1.0)
     seed: Optional[int] = Field(None)
@@ -366,6 +395,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Mount static files for serving images
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 # Request logging middleware
 @app.middleware("http")
@@ -502,9 +534,17 @@ async def generate_images(request: ImageGenerationRequest):
         # Encode response
         data = []
         for i, img in enumerate(images):
-            b64 = encode_image_to_base64(img)
-            data.append(ImageData(b64_json=b64, revised_prompt=request.prompt))
-            logger.info("image_encoded", request_id=request_id, index=i+1, size_kb=len(b64)//1024)
+            if request.response_format == "url":
+                # Save image to assets folder
+                filename = save_image_to_assets(img, prefix="generated")
+                image_url = f"/assets/{filename}"
+                data.append(ImageData(url=image_url, revised_prompt=request.prompt))
+                logger.info("image_saved_as_url", request_id=request_id, index=i+1, url=image_url)
+            else:
+                # Return base64 encoded image
+                b64 = encode_image_to_base64(img)
+                data.append(ImageData(b64_json=b64, revised_prompt=request.prompt))
+                logger.info("image_encoded", request_id=request_id, index=i+1, size_kb=len(b64)//1024)
 
         elapsed = time.time() - start
         model_manager._stats["requests_success"] += 1
@@ -608,7 +648,15 @@ async def edit_images(request: ImageEditRequest):
                 images.append(result.images[0])
 
         # Encode response
-        data = [ImageData(b64_json=encode_image_to_base64(img)) for img in images]
+        data = []
+        for img in images:
+            if request.response_format == "url":
+                filename = save_image_to_assets(img, prefix="edited")
+                image_url = f"/assets/{filename}"
+                data.append(ImageData(url=image_url))
+            else:
+                b64 = encode_image_to_base64(img)
+                data.append(ImageData(b64_json=b64))
 
         elapsed = time.time() - start
         model_manager._stats["requests_success"] += 1
@@ -675,7 +723,15 @@ async def create_variations(request: ImageVariationRequest):
                 images.append(result.images[0])
 
         # Encode response
-        data = [ImageData(b64_json=encode_image_to_base64(img)) for img in images]
+        data = []
+        for img in images:
+            if request.response_format == "url":
+                filename = save_image_to_assets(img, prefix="variation")
+                image_url = f"/assets/{filename}"
+                data.append(ImageData(url=image_url))
+            else:
+                b64 = encode_image_to_base64(img)
+                data.append(ImageData(b64_json=b64))
 
         elapsed = time.time() - start
         model_manager._stats["requests_success"] += 1
