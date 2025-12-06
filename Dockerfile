@@ -46,6 +46,12 @@ COPY config/ /app/config/
 COPY scripts/ /app/scripts/
 RUN chmod +x /app/scripts/*.sh
 
+# Create assets directory for serving images
+RUN mkdir -p /app/assets && chmod 777 /app/assets
+
+# Create volume for persistent assets storage
+VOLUME ["/app/assets"]
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD python /app/scripts/healthcheck.py || exit 1

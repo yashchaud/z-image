@@ -362,7 +362,13 @@ class HealthResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan with model loading."""
-    logger.info("server_starting")
+    logger.info("server_starting", assets_dir=ASSETS_DIR)
+
+    # Verify assets directory exists
+    if os.path.exists(ASSETS_DIR):
+        logger.info("assets_directory_exists", path=ASSETS_DIR, writable=os.access(ASSETS_DIR, os.W_OK))
+    else:
+        logger.warning("assets_directory_missing", path=ASSETS_DIR)
 
     # Startup: load model
     default_model = config.get("default_model", "z-image-turbo")
@@ -387,6 +393,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Mount static files for serving images - MUST be before middleware
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
 # Add CORS
 app.add_middleware(
     CORSMiddleware,
@@ -395,9 +404,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Mount static files for serving images
-app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 # Request logging middleware
 @app.middleware("http")
@@ -447,9 +453,47 @@ async def root():
             "image_editing": "/v1/images/edits",
             "image_variations": "/v1/images/variations",
             "health": "/health",
-            "models": "/v1/models"
-        }
+            "models": "/v1/models",
+            "assets": "/assets",
+            "list_assets": "/debug/assets"
+        },
+        "assets_dir": ASSETS_DIR
     }
+
+@app.get("/debug/assets")
+async def list_assets():
+    """List all files in the assets directory (for debugging)."""
+    try:
+        if not os.path.exists(ASSETS_DIR):
+            return {
+                "error": "Assets directory does not exist",
+                "path": ASSETS_DIR
+            }
+
+        files = []
+        for filename in os.listdir(ASSETS_DIR):
+            filepath = os.path.join(ASSETS_DIR, filename)
+            if os.path.isfile(filepath):
+                files.append({
+                    "filename": filename,
+                    "url": f"/assets/{filename}",
+                    "size": os.path.getsize(filepath),
+                    "modified": os.path.getmtime(filepath)
+                })
+
+        return {
+            "assets_dir": ASSETS_DIR,
+            "exists": True,
+            "writable": os.access(ASSETS_DIR, os.W_OK),
+            "count": len(files),
+            "files": sorted(files, key=lambda x: x["modified"], reverse=True)
+        }
+    except Exception as e:
+        logger.error("list_assets_failed", error=str(e), traceback=traceback.format_exc())
+        return {
+            "error": str(e),
+            "assets_dir": ASSETS_DIR
+        }
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
