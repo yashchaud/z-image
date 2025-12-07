@@ -66,6 +66,28 @@ def decode_base64_image(b64_string: str) -> Image.Image:
         logger.error("image_decode_failed", error=str(e))
         raise ValueError(f"Invalid image data: {str(e)}")
 
+def resize_to_valid_dimensions(image: Image.Image, divisor: int = 16) -> Image.Image:
+    """
+    Resize image to dimensions divisible by the given divisor.
+    Most diffusion models require dimensions divisible by 16 or 8.
+    """
+    width, height = image.size
+    new_width = (width // divisor) * divisor
+    new_height = (height // divisor) * divisor
+
+    # Ensure minimum size
+    new_width = max(new_width, divisor)
+    new_height = max(new_height, divisor)
+
+    if new_width != width or new_height != height:
+        logger.info("resizing_image",
+                   original=f"{width}x{height}",
+                   resized=f"{new_width}x{new_height}",
+                   divisor=divisor)
+        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    return image
+
 async def fetch_image_from_url(image_url: str) -> Image.Image:
     """Fetch image from URL and validate it."""
     try:
@@ -689,6 +711,9 @@ async def edit_images(request: ImageEditRequest):
         else:
             input_image = decode_base64_image(request.image)
 
+        # Resize to valid dimensions (divisible by 16 for most diffusion models)
+        input_image = resize_to_valid_dimensions(input_image, divisor=16)
+
         # Load mask if provided (from URL or base64)
         mask_image = None
         if request.mask or request.mask_url:
@@ -697,6 +722,8 @@ async def edit_images(request: ImageEditRequest):
                 mask_image = await fetch_image_from_url(request.mask_url)
             else:
                 mask_image = decode_base64_image(request.mask)
+            # Resize mask to match input image dimensions
+            mask_image = mask_image.resize(input_image.size, Image.Resampling.LANCZOS)
             mask_image = mask_image.convert("L")
 
         # Get params
