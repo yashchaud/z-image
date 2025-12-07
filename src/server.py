@@ -217,11 +217,27 @@ class ModelManager:
 
                 # Check if custom pipeline class is specified
                 custom_pipeline = config.get("pipeline_class")
+                quantization = config.get("quantization")
+                gguf_file = config.get("gguf_file")
 
                 # Load text-to-image pipeline
-                logger.info("loading_text2img_pipeline", custom_pipeline=custom_pipeline)
+                logger.info("loading_text2img_pipeline",
+                           custom_pipeline=custom_pipeline,
+                           quantization=quantization,
+                           gguf_file=gguf_file)
 
-                if custom_pipeline:
+                if quantization == "gguf" and gguf_file:
+                    # Load GGUF quantized model
+                    logger.info("loading_gguf_model", file=gguf_file)
+                    self.text2img_pipeline = DiffusionPipeline.from_pretrained(
+                        model_id,
+                        torch_dtype=dtype,
+                        cache_dir=cache_dir,
+                        trust_remote_code=True,
+                        use_safetensors=False,
+                        gguf_file=gguf_file
+                    )
+                elif custom_pipeline:
                     # Load custom pipeline with trust_remote_code
                     self.text2img_pipeline = DiffusionPipeline.from_pretrained(
                         model_id,
