@@ -25,6 +25,8 @@ services:
       - model-cache:/app/models
       # Config override (optional)
       - ./config:/app/config:ro
+      # Assets directory for generated images
+      - assets:/app/assets
 
     environment:
       - MODEL_ID=${MODEL_ID:-Tongyi-MAI/Z-Image-Turbo}
@@ -57,4 +59,6 @@ services:
 
 volumes:
   model-cache:
+    driver: local
+  assets:
     driver: local
