@@ -244,9 +244,15 @@ class ModelManager:
                 # Load image-to-image pipeline
                 logger.info("loading_img2img_pipeline")
                 try:
-                    self.img2img_pipeline = AutoPipelineForImage2Image.from_pipe(
-                        self.text2img_pipeline
-                    )
+                    if custom_pipeline:
+                        # For custom pipelines like Qwen Image Edit, use the same pipeline for img2img
+                        # These models are unified and handle both text2img and img2img
+                        self.img2img_pipeline = self.text2img_pipeline
+                        logger.info("using_unified_pipeline_for_img2img", custom_pipeline=custom_pipeline)
+                    else:
+                        self.img2img_pipeline = AutoPipelineForImage2Image.from_pipe(
+                            self.text2img_pipeline
+                        )
                 except Exception as e:
                     logger.warning("img2img_pipeline_unavailable", error=str(e))
                     self.img2img_pipeline = None
@@ -254,9 +260,14 @@ class ModelManager:
                 # Load inpainting pipeline
                 logger.info("loading_inpaint_pipeline")
                 try:
-                    self.inpaint_pipeline = AutoPipelineForInpainting.from_pipe(
-                        self.text2img_pipeline
-                    )
+                    if custom_pipeline:
+                        # For custom pipelines, use the same pipeline for inpainting
+                        self.inpaint_pipeline = self.text2img_pipeline
+                        logger.info("using_unified_pipeline_for_inpaint", custom_pipeline=custom_pipeline)
+                    else:
+                        self.inpaint_pipeline = AutoPipelineForInpainting.from_pipe(
+                            self.text2img_pipeline
+                        )
                 except Exception as e:
                     logger.warning("inpaint_pipeline_unavailable", error=str(e))
                     self.inpaint_pipeline = None
