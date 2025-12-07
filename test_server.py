@@ -70,7 +70,7 @@ def test_text_to_image():
 
 def test_image_to_image():
     """Test image-to-image editing."""
-    print_section("Testing Image-to-Image Editing")
+    print_section("Testing Image-to-Image Editing (Base64)")
 
     # First, check if we have a test image
     test_image_path = Path("test_output_text2img_0.png")
@@ -83,7 +83,7 @@ def test_image_to_image():
         img_b64 = base64.b64encode(f.read()).decode()
 
     payload = {
-        "prompt": "Transform into a vibrant sunset scene",
+        "prompt": "Professional layout polish. Keep the exact same text content and order.",
         "image": img_b64,
         "n": 1,
         "strength": 0.7,
@@ -109,8 +109,52 @@ def test_image_to_image():
 
             return True
         elif response.status_code == 501:
-            print("Image-to-image not supported by this model (expected for some models)")
+            print("Image-to-image not supported by this model (now using text-to-image fallback)")
             return None
+        else:
+            print(f"Error: {response.text}")
+            return False
+
+    except Exception as e:
+        print(f"ERROR: {e}")
+        return False
+
+def test_image_edit_with_url():
+    """Test image editing with URL-based image input."""
+    print_section("Testing Image Editing with URL Input")
+
+    # Example using a public image URL
+    # Note: Replace with your own image URL for testing
+    image_url = "https://via.placeholder.com/512x512"  # Placeholder image for demo
+
+    payload = {
+        "prompt": "Make this image more vibrant and colorful",
+        "image_url": image_url,
+        "n": 1,
+        "strength": 0.7,
+        "response_format": "b64_json",
+        "num_inference_steps": 20,
+        "seed": 456
+    }
+
+    print(f"Request: Image URL = {image_url}")
+    print(f"Prompt: '{payload['prompt']}'\n")
+
+    try:
+        response = requests.post(f"{BASE_URL}/v1/images/edits", json=payload)
+        print(f"Status Code: {response.status_code}")
+
+        if response.status_code == 200:
+            data = response.json()
+            print(f"Generated {len(data['data'])} edited image(s)")
+
+            for i, img_data in enumerate(data['data']):
+                img_bytes = base64.b64decode(img_data['b64_json'])
+                output_path = Path(f"test_output_img_from_url_{i}.png")
+                output_path.write_bytes(img_bytes)
+                print(f"Saved image to: {output_path}")
+
+            return True
         else:
             print(f"Error: {response.text}")
             return False
@@ -167,6 +211,7 @@ def main():
     results['text_to_image'] = test_text_to_image()
     results['stats'] = test_stats_endpoint()
     results['image_to_image'] = test_image_to_image()
+    results['image_edit_with_url'] = test_image_edit_with_url()
 
     # Summary
     print_section("Test Summary")

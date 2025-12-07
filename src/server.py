@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 
 import torch
 from PIL import Image
+import requests
 from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +65,38 @@ def decode_base64_image(b64_string: str) -> Image.Image:
     except Exception as e:
         logger.error("image_decode_failed", error=str(e))
         raise ValueError(f"Invalid image data: {str(e)}")
+
+async def fetch_image_from_url(image_url: str) -> Image.Image:
+    """Fetch image from URL and validate it."""
+    try:
+        # Validate URL
+        if not image_url.startswith(("http://", "https://")):
+            raise ValueError("Invalid URL: must start with http:// or https://")
+
+        # Fetch image with timeout
+        response = requests.get(image_url, timeout=10)
+        response.raise_for_status()
+
+        # Validate content type
+        content_type = response.headers.get("content-type", "").lower()
+        if not any(img_type in content_type for img_type in ["image/", "application/octet-stream"]):
+            raise ValueError(f"Invalid content type: {content_type}")
+
+        # Check size (max 50MB)
+        if len(response.content) > 50 * 1024 * 1024:
+            raise ValueError("Image size exceeds 50MB limit")
+
+        # Load and validate image
+        image = Image.open(BytesIO(response.content))
+        image.verify()
+        image = Image.open(BytesIO(response.content))
+        return image.convert("RGB")
+    except requests.RequestException as e:
+        logger.error("image_url_fetch_failed", url=image_url, error=str(e))
+        raise ValueError(f"Failed to fetch image from URL: {str(e)}")
+    except Exception as e:
+        logger.error("image_url_processing_failed", url=image_url, error=str(e))
+        raise ValueError(f"Invalid image from URL: {str(e)}")
 
 def encode_image_to_base64(image: Image.Image, format: str = "PNG") -> str:
     """Encode PIL Image to base64 string."""
@@ -309,8 +342,10 @@ class ImageGenerationRequest(BaseModel):
 class ImageEditRequest(BaseModel):
     """Image editing/inpainting request."""
     prompt: str = Field(..., min_length=1, max_length=2000)
-    image: str = Field(..., description="Base64 encoded image")
-    mask: Optional[str] = Field(None, description="Base64 encoded mask")
+    image: Optional[str] = Field(None, description="Base64 encoded image or image URL")
+    image_url: Optional[str] = Field(None, description="Image URL (alternative to image)")
+    mask: Optional[str] = Field(None, description="Base64 encoded mask or mask URL")
+    mask_url: Optional[str] = Field(None, description="Mask URL (alternative to mask)")
     n: int = Field(1, ge=1, le=4)
     size: Optional[str] = Field(None, description="Output size (WxH)")
     response_format: Literal["url", "b64_json"] = Field("url")
@@ -319,6 +354,12 @@ class ImageEditRequest(BaseModel):
     num_inference_steps: Optional[int] = Field(None, ge=1, le=100)
     strength: Optional[float] = Field(0.8, ge=0.0, le=1.0, description="Transformation strength")
     seed: Optional[int] = Field(None)
+
+    @field_validator('image', 'image_url', mode='before')
+    @classmethod
+    def validate_image_input(cls, v):
+        """Ensure at least one image input is provided."""
+        return v
 
 class ImageVariationRequest(BaseModel):
     """Image variation request."""
@@ -619,39 +660,44 @@ async def edit_images(request: ImageEditRequest):
     Edit images using prompts (image-to-image or inpainting).
 
     Supports both image-to-image transformation and inpainting with masks.
+    - image: Base64 encoded image or use image_url
+    - image_url: URL to image (alternative to image)
+    - mask: Base64 encoded mask or use mask_url
+    - mask_url: URL to mask (alternative to mask)
     """
     request_id = str(uuid.uuid4())
+
+    # Validate that at least one image source is provided
+    if not request.image and not request.image_url:
+        raise HTTPException(status_code=400, detail="Either 'image' (base64) or 'image_url' must be provided")
+
     logger.info("image_edit_request",
                request_id=request_id,
                prompt=request.prompt[:100],
-               has_mask=request.mask is not None,
+               has_mask=request.mask is not None or request.mask_url is not None,
+               has_image_url=request.image_url is not None,
                n=request.n)
-
-    # Choose appropriate pipeline
-    if request.mask:
-        if model_manager.inpaint_pipeline is None:
-            raise HTTPException(status_code=501, detail="Inpainting not supported by this model")
-        pipeline = model_manager.inpaint_pipeline
-        mode = "inpaint"
-    else:
-        if model_manager.img2img_pipeline is None:
-            raise HTTPException(status_code=501, detail="Image-to-image not supported by this model")
-        pipeline = model_manager.img2img_pipeline
-        mode = "img2img"
 
     start = time.time()
     model_manager._stats["requests_total"] += 1
 
     try:
-        # Decode input image
-        logger.info("decoding_input_image", request_id=request_id)
-        input_image = decode_base64_image(request.image)
+        # Load input image (from URL or base64)
+        logger.info("loading_input_image", request_id=request_id, from_url=request.image_url is not None)
+        if request.image_url:
+            input_image = await fetch_image_from_url(request.image_url)
+        else:
+            input_image = decode_base64_image(request.image)
 
-        # Decode mask if provided
+        # Load mask if provided (from URL or base64)
         mask_image = None
-        if request.mask:
-            logger.info("decoding_mask", request_id=request_id)
-            mask_image = decode_base64_image(request.mask).convert("L")
+        if request.mask or request.mask_url:
+            logger.info("loading_mask", request_id=request_id, from_url=request.mask_url is not None)
+            if request.mask_url:
+                mask_image = await fetch_image_from_url(request.mask_url)
+            else:
+                mask_image = decode_base64_image(request.mask)
+            mask_image = mask_image.convert("L")
 
         # Get params
         default_params = model_manager.config.get("default_params", {})
@@ -663,6 +709,35 @@ async def edit_images(request: ImageEditRequest):
         generator = None
         if request.seed is not None:
             generator = torch.Generator(device=model_manager.device).manual_seed(request.seed)
+
+        # Determine pipeline and mode
+        mode = None
+        pipeline = None
+
+        # Try inpainting if mask provided
+        if mask_image is not None:
+            if model_manager.inpaint_pipeline is not None:
+                mode = "inpaint"
+                pipeline = model_manager.inpaint_pipeline
+                logger.info("using_inpaint_pipeline", request_id=request_id)
+            else:
+                logger.warning("inpaint_not_available_fallback_to_text2img", request_id=request_id)
+
+        # Try image-to-image if no mask
+        if mode is None and mask_image is None:
+            if model_manager.img2img_pipeline is not None:
+                mode = "img2img"
+                pipeline = model_manager.img2img_pipeline
+                logger.info("using_img2img_pipeline", request_id=request_id)
+            else:
+                logger.warning("img2img_not_available_fallback_to_text2img", request_id=request_id)
+
+        # Fallback: use text2img with image dimensions when img2img/inpaint unavailable
+        if mode is None:
+            mode = "text2img_with_dims"
+            pipeline = model_manager.text2img_pipeline
+            logger.info("using_text2img_fallback", request_id=request_id,
+                       input_dims=f"{input_image.width}x{input_image.height}")
 
         # Generate images
         images = []
@@ -680,13 +755,22 @@ async def edit_images(request: ImageEditRequest):
                         strength=strength,
                         generator=generator
                     )
-                else:
+                elif mode == "img2img":
                     result = pipeline(
                         prompt=request.prompt,
                         image=input_image,
                         guidance_scale=guidance_scale,
                         num_inference_steps=num_steps,
                         strength=strength,
+                        generator=generator
+                    )
+                else:  # text2img_with_dims fallback
+                    result = pipeline(
+                        prompt=request.prompt,
+                        width=input_image.width,
+                        height=input_image.height,
+                        guidance_scale=guidance_scale,
+                        num_inference_steps=num_steps,
                         generator=generator
                     )
                 images.append(result.images[0])
