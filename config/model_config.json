@@ -2,13 +2,11 @@
   "default_model": "qwen-image-edit",
   "models": {
     "qwen-image-edit": {
-      "model_id": "QuantStack/Qwen-Image-Edit-2509-GGUF",
+      "model_id": "Qwen/Qwen-Image-Edit-2509",
       "pipeline_class": "QwenImageEditPlusPipeline",
-      "torch_dtype": "float16",
+      "torch_dtype": "bfloat16",
       "variant": null,
       "scheduler": null,
-      "gguf_file": "diffusion_model_q8_0.gguf",
-      "quantization": "gguf",
       "default_params": {
         "guidance_scale": 7.5,
         "num_inference_steps": 30,
