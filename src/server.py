@@ -10,6 +10,7 @@ import base64
 import time
 import traceback
 import uuid
+import inspect
 from io import BytesIO
 from typing import Optional, List, Literal, Union
 from contextlib import asynccontextmanager
@@ -800,24 +801,46 @@ async def edit_images(request: ImageEditRequest):
 
             with torch.inference_mode():
                 if mode == "inpaint":
-                    result = pipeline(
-                        prompt=request.prompt,
-                        image=input_image,
-                        mask_image=mask_image,
-                        guidance_scale=guidance_scale,
-                        num_inference_steps=num_steps,
-                        strength=strength,
-                        generator=generator
-                    )
+                    # Check if pipeline supports strength parameter
+                    if hasattr(pipeline, '__call__') and 'strength' in pipeline.__call__.__code__.co_varnames:
+                        result = pipeline(
+                            prompt=request.prompt,
+                            image=input_image,
+                            mask_image=mask_image,
+                            guidance_scale=guidance_scale,
+                            num_inference_steps=num_steps,
+                            strength=strength,
+                            generator=generator
+                        )
+                    else:
+                        result = pipeline(
+                            prompt=request.prompt,
+                            image=input_image,
+                            mask_image=mask_image,
+                            guidance_scale=guidance_scale,
+                            num_inference_steps=num_steps,
+                            generator=generator
+                        )
                 elif mode == "img2img":
-                    result = pipeline(
-                        prompt=request.prompt,
-                        image=input_image,
-                        guidance_scale=guidance_scale,
-                        num_inference_steps=num_steps,
-                        strength=strength,
-                        generator=generator
-                    )
+                    # Check if pipeline supports strength parameter
+                    if hasattr(pipeline, '__call__') and 'strength' in pipeline.__call__.__code__.co_varnames:
+                        result = pipeline(
+                            prompt=request.prompt,
+                            image=input_image,
+                            guidance_scale=guidance_scale,
+                            num_inference_steps=num_steps,
+                            strength=strength,
+                            generator=generator
+                        )
+                    else:
+                        # Qwen Image Edit doesn't use strength, just call directly
+                        result = pipeline(
+                            prompt=request.prompt,
+                            image=input_image,
+                            guidance_scale=guidance_scale,
+                            num_inference_steps=num_steps,
+                            generator=generator
+                        )
                 else:  # text2img_with_dims fallback
                     result = pipeline(
                         prompt=request.prompt,
