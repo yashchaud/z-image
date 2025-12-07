@@ -3,7 +3,7 @@
   "models": {
     "qwen-image-edit": {
       "model_id": "Qwen/Qwen-Image-Edit-2509",
-      "pipeline_class": null,
+      "pipeline_class": "QwenImageEditPlusPipeline",
       "torch_dtype": "bfloat16",
       "variant": null,
       "scheduler": null,
