@@ -24,8 +24,8 @@ curl -s -X POST "${BASE_URL}/v1/images/generations" \
     "n": 1,
     "size": "1024x1024",
     "response_format": "url",
-    "guidance_scale": 7.5,
-    "num_inference_steps": 30,
+    "guidance_scale": 4.5,
+    "num_inference_steps": 50,
     "seed": 42
   }' | jq .
 
@@ -39,8 +39,8 @@ curl -s -X POST "${BASE_URL}/v1/images/edits" \
     "image_url": "https://raw.githubusercontent.com/CompVis/stable-diffusion/main/assets/stable-samples/img2img/sketch-mountains-input.jpg",
     "n": 1,
     "response_format": "url",
-    "guidance_scale": 7.5,
-    "num_inference_steps": 30,
+    "guidance_scale": 4.5,
+    "num_inference_steps": 50,
     "strength": 0.8,
     "seed": 123
   }' | jq .

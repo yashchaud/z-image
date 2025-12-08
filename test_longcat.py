@@ -26,8 +26,8 @@ def test_longcat_text_to_image():
         "n": 1,
         "size": "1024x1024",
         "response_format": "url",  # Changed to url for easier viewing
-        "guidance_scale": 7.5,
-        "num_inference_steps": 30,
+        "guidance_scale": 4.5,
+        "num_inference_steps": 50,
         "seed": 42
     }
 
@@ -73,8 +73,8 @@ def test_longcat_image_edit():
         "image_url": image_url,
         "n": 1,
         "response_format": "url",
-        "guidance_scale": 7.5,
-        "num_inference_steps": 30,
+        "guidance_scale": 4.5,
+        "num_inference_steps": 50,
         "strength": 0.8,
         "seed": 123
     }
@@ -128,8 +128,8 @@ def test_longcat_with_local_image():
         "image": img_b64,
         "n": 1,
         "response_format": "url",
-        "guidance_scale": 7.5,
-        "num_inference_steps": 30,
+        "guidance_scale": 4.5,
+        "num_inference_steps": 50,
         "strength": 0.75,
         "seed": 456
     }
