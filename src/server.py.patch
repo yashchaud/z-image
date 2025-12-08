@@ -1,0 +1,11 @@
+# After line 28 (after "from dotenv import load_dotenv"), add:
+
+# Try to import LongCat custom pipeline (optional)
+try:
+    from longcat_image.models import LongCatImageTransformer2DModel
+    from longcat_image.pipelines import LongCatImageEditPipeline
+    from transformers import AutoProcessor
+    LONGCAT_AVAILABLE = True
+except ImportError:
+    LONGCAT_AVAILABLE = False
+

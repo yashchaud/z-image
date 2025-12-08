@@ -26,6 +26,15 @@ from pydantic import BaseModel, Field, field_validator
 import structlog
 from dotenv import load_dotenv
 
+# Try to import LongCat custom pipeline (optional)
+try:
+    from longcat_image.models import LongCatImageTransformer2DModel
+    from longcat_image.pipelines import LongCatImageEditPipeline
+    from transformers import AutoProcessor as LongCatAutoProcessor
+    LONGCAT_AVAILABLE = True
+except ImportError:
+    LONGCAT_AVAILABLE = False
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -238,6 +247,36 @@ class ModelManager:
                         use_safetensors=False,
                         gguf_file=gguf_file
                     )
+                elif custom_pipeline == "LongCatImageEditPipeline":
+                    # Load LongCat custom pipeline
+                    if not LONGCAT_AVAILABLE:
+                        raise ImportError(
+                            "LongCat library not installed. Install from: "
+                            "https://github.com/meituan-longcat/LongCat-Image"
+                        )
+                    logger.info("loading_longcat_pipeline", model_id=model_id)
+                    
+                    text_processor = LongCatAutoProcessor.from_pretrained(
+                        model_id,
+                        subfolder="tokenizer",
+                        cache_dir=cache_dir
+                    )
+                    
+                    transformer = LongCatImageTransformer2DModel.from_pretrained(
+                        model_id,
+                        subfolder="transformer",
+                        torch_dtype=dtype,
+                        use_safetensors=True,
+                        cache_dir=cache_dir
+                    ).to(self.device)
+                    
+                    self.text2img_pipeline = LongCatImageEditPipeline.from_pretrained(
+                        model_id,
+                        transformer=transformer,
+                        text_processor=text_processor,
+                        cache_dir=cache_dir
+                    )
+                    self.text2img_pipeline = self.text2img_pipeline.to(self.device, dtype)
                 elif custom_pipeline:
                     # Load custom pipeline with trust_remote_code
                     self.text2img_pipeline = DiffusionPipeline.from_pretrained(
@@ -769,7 +808,6 @@ async def edit_images(request: ImageEditRequest):
         mode = None
         pipeline = None
 
-        # Try inpainting if mask provided
         if mask_image is not None:
             if model_manager.inpaint_pipeline is not None:
                 mode = "inpaint"
