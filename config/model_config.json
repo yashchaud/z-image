@@ -28,6 +28,21 @@
         "height": 1024,
         "width": 1024
       }
+    },
+    "longcat-image-edit": {
+      "model_id": "leokooo220/LongCat-Image-Edit",
+      "pipeline_class": "QwenImageEditPlusPipeline",
+      "torch_dtype": "bfloat16",
+      "variant": null,
+      "scheduler": null,
+      "default_params": {
+        "guidance_scale": 7.5,
+        "num_inference_steps": 30,
+        "height": 1024,
+        "width": 1024
+      },
+      "enable_vae_slicing": true,
+      "enable_vae_tiling": true
     }
   },
   "server": {

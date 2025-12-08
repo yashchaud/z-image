@@ -799,10 +799,22 @@ async def edit_images(request: ImageEditRequest):
         for i in range(request.n):
             logger.info("editing_image", request_id=request_id, mode=mode, index=i+1, total=request.n)
 
+            # Check if pipeline supports strength parameter using inspect
+            try:
+                sig = inspect.signature(pipeline.__call__)
+                supports_strength = 'strength' in sig.parameters
+            except Exception:
+                # Fallback: assume strength is not supported for custom pipelines
+                supports_strength = False
+
+            logger.info("pipeline_parameter_check",
+                       mode=mode,
+                       supports_strength=supports_strength,
+                       pipeline_type=type(pipeline).__name__)
+
             with torch.inference_mode():
                 if mode == "inpaint":
-                    # Check if pipeline supports strength parameter
-                    if hasattr(pipeline, '__call__') and 'strength' in pipeline.__call__.__code__.co_varnames:
+                    if supports_strength and strength is not None:
                         result = pipeline(
                             prompt=request.prompt,
                             image=input_image,
@@ -822,8 +834,7 @@ async def edit_images(request: ImageEditRequest):
                             generator=generator
                         )
                 elif mode == "img2img":
-                    # Check if pipeline supports strength parameter
-                    if hasattr(pipeline, '__call__') and 'strength' in pipeline.__call__.__code__.co_varnames:
+                    if supports_strength and strength is not None:
                         result = pipeline(
                             prompt=request.prompt,
                             image=input_image,
@@ -833,7 +844,7 @@ async def edit_images(request: ImageEditRequest):
                             generator=generator
                         )
                     else:
-                        # Qwen Image Edit doesn't use strength, just call directly
+                        # Qwen Image Edit and other custom pipelines don't use strength
                         result = pipeline(
                             prompt=request.prompt,
                             image=input_image,
