@@ -1,63 +1,58 @@
-# Lightweight base with CUDA support
-# Using NVIDIA's public registry (no authentication required)
-FROM nvcr.io/nvidia/cuda:12.1.0-runtime-ubuntu22.04 AS base
+# Z-Image Server - Production Dockerfile
+# Optimized for RunPod deployment with LinkedIn pipeline support
 
-# Build args for flexibility
-ARG PYTHON_VERSION=3.11
-ARG MODEL_ID=Tongyi-MAI/Z-Image-Turbo
-ARG HF_HOME=/app/models
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
-# Environment setup
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    HF_HOME=${HF_HOME} \
-    MODEL_ID=${MODEL_ID}
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Python and dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    python${PYTHON_VERSION} \
-    python${PYTHON_VERSION}-distutils \
-    python3-pip \
-    git \
-    curl \
-    wget \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python \
-    && ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
-    && python -m pip install --upgrade pip setuptools wheel
-
+# Set working directory
 WORKDIR /app
 
-# Install FastFusion and dependencies
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip
+RUN pip3 install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy requirements and install dependencies
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY src/ /app/src/
-
-# Copy configuration and scripts
 COPY config/ /app/config/
-COPY scripts/ /app/scripts/
-RUN chmod +x /app/scripts/*.sh
+COPY start_server.sh /app/start_server.sh
 
-# Create assets directory for serving images
-RUN mkdir -p /app/assets && chmod 777 /app/assets
+# Copy .env.example as default .env
+COPY .env.example /app/.env
 
-# Create volume for persistent assets storage
-VOLUME ["/app/assets"]
+# Make startup script executable
+RUN chmod +x /app/start_server.sh
+
+# Create directories
+RUN mkdir -p /app/assets /app/models
+
+# Create volumes for persistence
+VOLUME ["/app/assets", "/app/models"]
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/app/models
+ENV ASSETS_DIR=/app/assets
+
+# Expose port
+EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD python /app/scripts/healthcheck.py || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Expose API port
-EXPOSE 8000
-
-# Entrypoint handles model download and server start
-ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+# Run the application
+CMD ["python3", "src/server.py"]

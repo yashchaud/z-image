@@ -190,7 +190,7 @@ class ModelManager:
         self.model_id = None
         self.device = None
         self.config = None
-        self._lock = asyncio.Lock()
+        self._semaphore = asyncio.Semaphore(2)  # Allow 2 concurrent generations for 40GB GPU
         self._stats = {
             "requests_total": 0,
             "requests_success": 0,
@@ -200,7 +200,7 @@ class ModelManager:
 
     async def load_model(self, model_id: str, config: dict):
         """Load all required pipelines with error handling."""
-        async with self._lock:
+        async with self._semaphore:
             if self.text2img_pipeline is not None and self.model_id == model_id:
                 logger.info("model_already_loaded", model_id=model_id)
                 return
@@ -484,6 +484,45 @@ class HealthResponse(BaseModel):
     gpu_memory_used: Optional[str]
     pipelines_available: dict
     stats: dict
+
+# ============================================================================
+# LINKEDIN PIPELINE MODELS
+# ============================================================================
+
+class LinkedInGenerationRequest(BaseModel):
+    """LinkedIn post image generation request."""
+    text: str = Field(..., min_length=1, max_length=5000,
+                     description="Post idea or context")
+    reference_image: str = Field(..., description="Base64 encoded reference image")
+    size: str = Field("1024x1024", description="Image size (WxH)")
+    guidance_scale: Optional[float] = Field(None, ge=0.0, le=20.0)
+    num_inference_steps: Optional[int] = Field(None, ge=1, le=100)
+    seed: Optional[int] = Field(None, description="Random seed for reproducibility")
+    response_format: Literal["url", "b64_json"] = Field("url")
+
+    @field_validator('size')
+    @classmethod
+    def validate_size(cls, v):
+        try:
+            w, h = map(int, v.split('x'))
+            if w < 512 or h < 512 or w > 2048 or h > 2048:
+                raise ValueError("Size must be between 512x512 and 2048x2048")
+            return v
+        except:
+            raise ValueError("Size must be in format WIDTHxHEIGHT")
+
+class LinkedInVariantData(BaseModel):
+    """Single LinkedIn variant data."""
+    url: Optional[str] = None
+    b64_json: Optional[str] = None
+    prompt: str
+    seed: int
+
+class LinkedInGenerationResponse(BaseModel):
+    """LinkedIn generation response."""
+    created: int
+    variants: List[LinkedInVariantData]
+    metadata: dict
 
 # ============================================================================
 # FASTAPI APP
@@ -1009,6 +1048,101 @@ async def create_variations(request: ImageVariationRequest):
                     error=str(e),
                     traceback=traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Variation generation failed: {str(e)}")
+
+@app.post("/v1/linkedin/generate", response_model=LinkedInGenerationResponse)
+async def generate_linkedin_images(request: LinkedInGenerationRequest):
+    """
+    Generate LinkedIn post images with creative variations.
+
+    This endpoint:
+    1. Takes your post idea and a reference image
+    2. Uses AI to generate 2 creative visual prompts
+    3. Creates 2 image variants in parallel
+    4. Returns both variants with metadata
+    """
+    request_id = str(uuid.uuid4())
+    logger.info("linkedin_generation_request",
+               request_id=request_id,
+               text=request.text[:100],
+               size=request.size)
+
+    if model_manager.text2img_pipeline is None:
+        logger.error("pipeline_not_loaded", request_id=request_id)
+        raise HTTPException(status_code=503, detail="Model not loaded. Please wait.")
+
+    # Validate OpenRouter API key
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if not openrouter_key:
+        logger.error("openrouter_key_missing", request_id=request_id)
+        raise HTTPException(
+            status_code=500,
+            detail="OPENROUTER_API_KEY not configured in environment"
+        )
+
+    start = time.time()
+    model_manager._stats["requests_total"] += 1
+
+    try:
+        # Validate reference image
+        try:
+            reference_img = decode_base64_image(request.reference_image)
+            logger.info("reference_image_decoded",
+                       request_id=request_id,
+                       size=f"{reference_img.width}x{reference_img.height}")
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid reference_image: {str(e)}"
+            )
+
+        # Initialize pipeline components
+        from pipelines.openrouter_client import OpenRouterClient
+        from pipelines.linkedin_pipeline import LinkedInPipeline
+
+        openrouter_client = OpenRouterClient(
+            api_key=openrouter_key,
+            timeout=30
+        )
+
+        linkedin_pipeline = LinkedInPipeline(
+            model_manager=model_manager,
+            openrouter_client=openrouter_client
+        )
+
+        # Process request
+        result = await linkedin_pipeline.process(
+            text=request.text,
+            reference_image_b64=request.reference_image,
+            size=request.size,
+            guidance_scale=request.guidance_scale,
+            num_inference_steps=request.num_inference_steps,
+            seed=request.seed,
+            response_format=request.response_format
+        )
+
+        elapsed = time.time() - start
+        model_manager._stats["requests_success"] += 1
+        model_manager._stats["total_inference_time"] += elapsed
+
+        logger.info("linkedin_generation_complete",
+                   request_id=request_id,
+                   elapsed_seconds=round(elapsed, 2),
+                   variants=len(result["variants"]))
+
+        return LinkedInGenerationResponse(**result)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        model_manager._stats["requests_failed"] += 1
+        logger.error("linkedin_generation_failed",
+                    request_id=request_id,
+                    error=str(e),
+                    traceback=traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"LinkedIn generation failed: {str(e)}"
+        )
 
 @app.get("/v1/models")
 async def list_models():

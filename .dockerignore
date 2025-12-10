@@ -1,34 +1,108 @@
 # Git
 .git
 .gitignore
+.gitattributes
 
 # Python
-__pycache__
-*.pyc
-*.pyo
-*.egg-info
-.pytest_cache
-.mypy_cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 venv/
+env/
+ENV/
 .venv/
+.pytest_cache/
+.mypy_cache/
 
 # IDE
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
+.DS_Store
+
+# Models (downloaded at runtime)
+models/
+*.safetensors
+*.bin
+*.ckpt
+*.pth
+
+# Assets (generated at runtime)
+assets/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+
+# Logs
+*.log
+logs/
+*.out
+/tmp/
+
+# Documentation
+*.md
+!README.md
+docs/
+
+# Tests
+tests/
+test_*.py
+*_test.py
+pytest.ini
 
 # Docker
 docker-compose*.yml
 Dockerfile*
+.dockerignore
 
-# Docs
-*.md
-!README.md
+# Deployment scripts
+setup_*.sh
+manage_server.sh
+RUNPOD_DEPLOYMENT.md
 
-# Local files
+# Temporary files
+tmp/
+temp/
+.tmp/
+nul
+
+# OS
+Thumbs.db
+.DS_Store
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# Local environment
 .env
-*.log
-models/
 
 # Claude
 .claude/
+
+# Misc
+TODO
+NOTES
+.cache/

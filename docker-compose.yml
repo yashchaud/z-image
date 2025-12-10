@@ -1,49 +1,51 @@
+version: '3.8'
+
 services:
   z-image:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        MODEL_ID: ${MODEL_ID:-Tongyi-MAI/Z-Image-Turbo}
     image: z-image-server:latest
     container_name: z-image-server
 
-    # GPU support
+    # GPU support (Docker Compose V2 format)
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
 
     ports:
       - "${PORT:-8000}:8000"
 
     volumes:
-      # Persistent model cache (models downloaded here)
+      # Persistent model cache
       - model-cache:/app/models
-      # Config override (optional)
-      - ./config:/app/config:ro
       # Assets directory for generated images
       - assets:/app/assets
+      # Optional: Mount config for runtime changes
+      # - ./config:/app/config:ro
 
     environment:
       - MODEL_ID=${MODEL_ID:-Tongyi-MAI/Z-Image-Turbo}
-      - HF_TOKEN=${HF_TOKEN:-}
-      - HF_HUB_ENABLE_HF_TRANSFER=${HF_HUB_ENABLE_HF_TRANSFER:-0}
+      - HF_TOKEN=${HF_TOKEN}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - HF_HOME=/app/models
       - PORT=8000
       - HOST=0.0.0.0
       - WORKERS=1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      # Memory optimizations
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      # Memory optimizations for large models
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-    # Shared memory for PyTorch
-    shm_size: '8gb'
+    # Shared memory for PyTorch (important for 40GB+ models)
+    shm_size: '16gb'
 
     healthcheck:
-      test: ["CMD", "python", "/app/scripts/healthcheck.py"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
