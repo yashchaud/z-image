@@ -71,7 +71,7 @@ class SAMModelManager:
 
     async def _load_model(self, device: str):
         """
-        Load SAM3 processor and model using native SAM3 library.
+        Load SAM3 processor and model from transformers.
 
         Args:
             device: "cuda" or "cpu"
@@ -82,81 +82,44 @@ class SAMModelManager:
         try:
             logger.info("sam3_model_loading_start", device=device)
 
-            # Import SAM3 native library
-            from sam3.model_builder import build_sam3_image_model
-            from sam3.model.sam3_image_processor import Sam3Processor
-            from huggingface_hub import hf_hub_download
-            import traceback
+            # Import from transformers
+            from transformers import Sam3Processor, Sam3Model
+            import torch
 
             # Get HF token from environment
             hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
 
-            logger.info("sam3_downloading_checkpoint", repo="facebook/sam3", has_token=bool(hf_token))
+            logger.info("sam3_loading_from_transformers", repo="facebook/sam3", has_token=bool(hf_token))
 
-            try:
-                # Download model checkpoint from Hugging Face
-                checkpoint_path = hf_hub_download(
-                    repo_id="facebook/sam3",
-                    filename="model.safetensors",
-                    token=hf_token
-                )
+            # Load processor
+            self._processor = Sam3Processor.from_pretrained(
+                "facebook/sam3",
+                token=hf_token
+            )
 
-                logger.info("sam3_checkpoint_downloaded", path=checkpoint_path)
-            except Exception as download_error:
-                logger.error(
-                    "sam3_download_failed",
-                    error=str(download_error),
-                    error_type=type(download_error).__name__,
-                    traceback=traceback.format_exc()
-                )
-                raise
-
-            # Load model with native SAM3 builder from downloaded checkpoint
-            logger.info("sam3_loading_native_model", device=device)
-
-            # Set torch.load to use weights_only=False for SAM3 checkpoint
-            # SAM3 uses custom pickle operations that require this setting
-            import torch
-            original_load = torch.load
-
-            def patched_load(*args, **kwargs):
-                kwargs['weights_only'] = False
-                return original_load(*args, **kwargs)
-
-            torch.load = patched_load
-
-            try:
-                self._model = build_sam3_image_model(
-                    device=device,
-                    eval_mode=True,
-                    load_from_HF=False,
-                    checkpoint_path=checkpoint_path
-                )
-            finally:
-                # Restore original torch.load
-                torch.load = original_load
-
-            # Create processor
-            logger.info("sam3_creating_processor", device=device)
-            self._processor = Sam3Processor(self._model, device=device)
+            # Load model
+            self._model = Sam3Model.from_pretrained(
+                "facebook/sam3",
+                token=hf_token
+            ).to(device)
 
             self._device = device
 
             logger.info(
                 "sam3_model_loaded_successfully",
                 device=device,
-                model_type="native_sam3"
+                model_type="transformers_sam3"
             )
 
         except ImportError as e:
             logger.error(
                 "sam3_import_failed",
                 error=str(e),
-                hint="Install SAM3 library: pip install git+https://github.com/facebookresearch/sam3.git"
+                hint="Make sure transformers>=4.51.3 is installed"
             )
             raise ValueError(
-                f"Failed to import SAM3 native library. "
-                f"Install with: pip install git+https://github.com/facebookresearch/sam3.git "
+                f"Failed to import SAM3 from transformers. "
+                f"Make sure transformers>=4.51.3 is installed. "
                 f"Error: {str(e)}"
             )
 

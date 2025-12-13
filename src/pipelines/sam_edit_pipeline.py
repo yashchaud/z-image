@@ -238,16 +238,31 @@ class SAMEditPipeline:
         try:
             logger.info("sam3_segmentation_start", request_id=request_id, prompt=prompt)
 
-            # Set image in processor (native SAM3 API)
-            state = self.sam_processor.set_image(image)
+            import torch
 
-            # Segment with text prompt (native SAM3 API)
-            output = self.sam_processor.set_text_prompt(state=state, prompt=prompt)
+            # Prepare inputs using transformers processor API
+            inputs = self.sam_processor(
+                images=image,
+                text=prompt,
+                return_tensors="pt"
+            ).to(self.device)
+
+            # Run model inference
+            with torch.no_grad():
+                outputs = self.sam_model(**inputs)
+
+            # Post-process results
+            results = self.sam_processor.post_process_instance_segmentation(
+                outputs,
+                threshold=0.5,
+                mask_threshold=0.5,
+                target_sizes=inputs.get("original_sizes").tolist()
+            )[0]
 
             # Extract results
-            masks = output["masks"]  # Shape: (N, H, W) - N detected objects
-            boxes = output["boxes"]  # Shape: (N, 4) - xyxy format
-            scores = output["scores"]  # Shape: (N,) - confidence scores
+            masks = results["masks"]  # List of binary masks (H, W)
+            boxes = results["boxes"]  # Tensor of boxes in xyxy format
+            scores = results["scores"]  # Tensor of confidence scores
 
             # Check if any objects found
             if len(masks) == 0:
@@ -257,9 +272,9 @@ class SAMEditPipeline:
                 )
 
             # Use highest confidence mask
-            best_idx = int(np.argmax(scores))
-            mask = masks[best_idx]  # Binary mask (H, W)
-            bbox = boxes[best_idx].tolist()  # [x1, y1, x2, y2]
+            best_idx = int(torch.argmax(scores))
+            mask = masks[best_idx].cpu().numpy()  # Binary mask (H, W)
+            bbox = boxes[best_idx].cpu().numpy().tolist()  # [x1, y1, x2, y2]
             confidence = float(scores[best_idx])
 
             # Log selection if multiple objects found
