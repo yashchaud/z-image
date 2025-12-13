@@ -87,6 +87,15 @@ class SAMModelManager:
             # Import SAM3 native library
             from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
+            from huggingface_hub import login
+
+            # Authenticate with Hugging Face if token available
+            hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+            if hf_token:
+                logger.info("sam3_authenticating_hf", has_token=True)
+                login(token=hf_token)
+            else:
+                logger.warning("sam3_no_hf_token", message="No HF_TOKEN found in environment")
 
             # Load model with native SAM3 builder
             logger.info("sam3_loading_native_model", device=device)
