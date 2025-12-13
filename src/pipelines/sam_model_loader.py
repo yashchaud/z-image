@@ -103,7 +103,7 @@ class SAMModelManager:
             logger.info("sam3_downloading_checkpoint", repo="facebook/sam3")
             checkpoint_path = hf_hub_download(
                 repo_id="facebook/sam3",
-                filename="sam3.safetensors",
+                filename="model.safetensors",
                 token=hf_token
             )
 
