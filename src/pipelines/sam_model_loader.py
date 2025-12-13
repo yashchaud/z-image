@@ -113,12 +113,28 @@ class SAMModelManager:
 
             # Load model with native SAM3 builder from downloaded checkpoint
             logger.info("sam3_loading_native_model", device=device)
-            self._model = build_sam3_image_model(
-                device=device,
-                eval_mode=True,
-                load_from_HF=False,
-                checkpoint_path=checkpoint_path
-            )
+
+            # Set torch.load to use weights_only=False for SAM3 checkpoint
+            # SAM3 uses custom pickle operations that require this setting
+            import torch
+            original_load = torch.load
+
+            def patched_load(*args, **kwargs):
+                kwargs['weights_only'] = False
+                return original_load(*args, **kwargs)
+
+            torch.load = patched_load
+
+            try:
+                self._model = build_sam3_image_model(
+                    device=device,
+                    eval_mode=True,
+                    load_from_HF=False,
+                    checkpoint_path=checkpoint_path
+                )
+            finally:
+                # Restore original torch.load
+                torch.load = original_load
 
             # Create processor
             logger.info("sam3_creating_processor", device=device)
