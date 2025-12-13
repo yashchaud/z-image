@@ -84,35 +84,24 @@ class SAMModelManager:
         try:
             logger.info("sam3_model_loading_start", device=device)
 
-            # Import transformers here to avoid import errors if not installed
-            try:
-                # Try SAM3 first (newest)
-                from transformers import Sam3Processor, Sam3Model
-                model_name = "facebook/sam3"
-                processor_class = Sam3Processor
-                model_class = Sam3Model
-                logger.info("using_sam3_model")
-            except ImportError:
-                # Fallback to SAM2 (stable, widely available)
-                from transformers import AutoProcessor, AutoModel
-                model_name = "facebook/sam2-hiera-large"
-                processor_class = AutoProcessor
-                model_class = AutoModel
-                logger.info("sam3_not_available_using_sam2_fallback")
+            # Import SAM3 from transformers
+            from transformers import Sam3Processor, Sam3Model
+
+            model_name = "facebook/sam3"
 
             # Get cache directory from environment or use default
             cache_dir = os.environ.get("HF_HOME", "./models")
 
             # Load processor
-            logger.info("sam_loading_processor", model=model_name, cache_dir=cache_dir)
-            self._processor = processor_class.from_pretrained(
+            logger.info("sam3_loading_processor", model=model_name, cache_dir=cache_dir)
+            self._processor = Sam3Processor.from_pretrained(
                 model_name,
                 cache_dir=cache_dir
             )
 
             # Load model
-            logger.info("sam_loading_model", model=model_name, device=device)
-            self._model = model_class.from_pretrained(
+            logger.info("sam3_loading_model", model=model_name, device=device)
+            self._model = Sam3Model.from_pretrained(
                 model_name,
                 cache_dir=cache_dir
             ).to(device)
@@ -120,7 +109,7 @@ class SAMModelManager:
             self._device = device
 
             logger.info(
-                "sam_model_loaded_successfully",
+                "sam3_model_loaded_successfully",
                 device=device,
                 model_id=model_name
             )
