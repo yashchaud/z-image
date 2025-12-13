@@ -97,12 +97,25 @@ class SAMModelManager:
             else:
                 logger.warning("sam3_no_hf_token", message="No HF_TOKEN found in environment")
 
-            # Load model with native SAM3 builder
+            # Download model checkpoint from Hugging Face
+            from huggingface_hub import hf_hub_download
+
+            logger.info("sam3_downloading_checkpoint", repo="facebook/sam3")
+            checkpoint_path = hf_hub_download(
+                repo_id="facebook/sam3",
+                filename="sam3.safetensors",
+                token=hf_token
+            )
+
+            logger.info("sam3_checkpoint_downloaded", path=checkpoint_path)
+
+            # Load model with native SAM3 builder from downloaded checkpoint
             logger.info("sam3_loading_native_model", device=device)
             self._model = build_sam3_image_model(
                 device=device,
                 eval_mode=True,
-                load_from_HF=True  # Download from Hugging Face
+                load_from_HF=False,  # Load from local checkpoint
+                checkpoint_path=checkpoint_path
             )
 
             # Create processor
