@@ -1,7 +1,7 @@
 # Core FastFusion/Diffusers stack
 torch>=2.1.0
 diffusers>=0.36.0
-transformers @ git+https://github.com/huggingface/transformers
+transformers>=4.51.3,<5.0.0
 accelerate
 safetensors
 
@@ -31,3 +31,4 @@ hf_transfer
 # SAM3 and image processing
 opencv-python>=4.8.0
 scipy>=1.11.0
+sam3 @ git+https://github.com/facebookresearch/sam3.git

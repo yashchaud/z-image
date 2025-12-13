@@ -222,7 +222,7 @@ class SAMEditPipeline:
         request_id: str
     ) -> Tuple[np.ndarray, List[int], float]:
         """
-        Step 1: Segment image with SAM3.
+        Step 1: Segment image with SAM3 native API.
 
         Args:
             image: PIL Image
@@ -238,47 +238,39 @@ class SAMEditPipeline:
         try:
             logger.info("sam3_segmentation_start", request_id=request_id, prompt=prompt)
 
-            # Prepare inputs
-            inputs = self.sam_processor(
-                images=image,
-                text=prompt,
-                return_tensors="pt"
-            ).to(self.device)
+            # Set image in processor (native SAM3 API)
+            state = self.sam_processor.set_image(image)
 
-            # Run inference
-            with torch.inference_mode():
-                outputs = self.sam_model(**inputs)
+            # Segment with text prompt (native SAM3 API)
+            output = self.sam_processor.set_text_prompt(state=state, prompt=prompt)
 
-            # Post-process results
-            results = self.sam_processor.post_process_instance_segmentation(
-                outputs,
-                threshold=0.5,
-                mask_threshold=0.5,
-                target_sizes=inputs.get("original_sizes").tolist()
-            )[0]
+            # Extract results
+            masks = output["masks"]  # Shape: (N, H, W) - N detected objects
+            boxes = output["boxes"]  # Shape: (N, 4) - xyxy format
+            scores = output["scores"]  # Shape: (N,) - confidence scores
 
             # Check if any objects found
-            if len(results['masks']) == 0:
+            if len(masks) == 0:
                 raise ValueError(
                     f"No objects found matching segmentation prompt: '{prompt}'. "
                     f"Please try a different prompt or verify the object exists in the image."
                 )
 
             # Use highest confidence mask
-            best_idx = int(np.argmax(results['scores']))
-            mask = results['masks'][best_idx].cpu().numpy()
-            bbox = results['boxes'][best_idx].cpu().numpy().tolist()
-            confidence = float(results['scores'][best_idx])
+            best_idx = int(np.argmax(scores))
+            mask = masks[best_idx]  # Binary mask (H, W)
+            bbox = boxes[best_idx].tolist()  # [x1, y1, x2, y2]
+            confidence = float(scores[best_idx])
 
             # Log selection if multiple objects found
-            if len(results['masks']) > 1:
+            if len(masks) > 1:
                 logger.info(
                     "sam3_multiple_objects_found",
                     request_id=request_id,
-                    num_objects=len(results['masks']),
+                    num_objects=len(masks),
                     selected_index=best_idx,
                     selected_confidence=confidence,
-                    all_confidences=[float(s) for s in results['scores']]
+                    all_confidences=[float(s) for s in scores]
                 )
 
             # Warn if low confidence

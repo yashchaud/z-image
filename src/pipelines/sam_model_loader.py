@@ -73,7 +73,7 @@ class SAMModelManager:
 
     async def _load_model(self, device: str):
         """
-        Load SAM3 processor and model.
+        Load SAM3 processor and model using native SAM3 library.
 
         Args:
             device: "cuda" or "cpu"
@@ -84,45 +84,40 @@ class SAMModelManager:
         try:
             logger.info("sam3_model_loading_start", device=device)
 
-            # Import SAM3 from transformers
-            from transformers import Sam3Processor, Sam3Model
+            # Import SAM3 native library
+            from sam3.model_builder import build_sam3_image_model
+            from sam3.model.sam3_image_processor import Sam3Processor
 
-            model_name = "facebook/sam3"
-
-            # Get cache directory from environment or use default
-            cache_dir = os.environ.get("HF_HOME", "./models")
-
-            # Load processor
-            logger.info("sam3_loading_processor", model=model_name, cache_dir=cache_dir)
-            self._processor = Sam3Processor.from_pretrained(
-                model_name,
-                cache_dir=cache_dir
+            # Load model with native SAM3 builder
+            logger.info("sam3_loading_native_model", device=device)
+            self._model = build_sam3_image_model(
+                device=device,
+                eval_mode=True,
+                load_from_HF=True  # Download from Hugging Face
             )
 
-            # Load model
-            logger.info("sam3_loading_model", model=model_name, device=device)
-            self._model = Sam3Model.from_pretrained(
-                model_name,
-                cache_dir=cache_dir
-            ).to(device)
+            # Create processor
+            logger.info("sam3_creating_processor", device=device)
+            self._processor = Sam3Processor(self._model, device=device)
 
             self._device = device
 
             logger.info(
                 "sam3_model_loaded_successfully",
                 device=device,
-                model_id=model_name
+                model_type="native_sam3"
             )
 
         except ImportError as e:
             logger.error(
                 "sam3_import_failed",
                 error=str(e),
-                hint="Install transformers library: pip install transformers"
+                hint="Install SAM3 library: pip install git+https://github.com/facebookresearch/sam3.git"
             )
             raise ValueError(
-                f"Failed to import SAM3 from transformers. "
-                f"Ensure transformers is installed: {str(e)}"
+                f"Failed to import SAM3 native library. "
+                f"Install with: pip install git+https://github.com/facebookresearch/sam3.git"
+                f"Error: {str(e)}"
             )
 
         except Exception as e:
