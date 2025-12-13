@@ -45,6 +45,9 @@ load_dotenv()
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
 os.makedirs(ASSETS_DIR, exist_ok=True)
 
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
 # ============================================================================
 # LOGGING CONFIGURATION
 # ============================================================================
@@ -525,6 +528,41 @@ class LinkedInGenerationResponse(BaseModel):
     metadata: dict
 
 # ============================================================================
+# SAM EDIT PIPELINE MODELS
+# ============================================================================
+
+class SAMEditRequest(BaseModel):
+    """SAM3 + Qwen Image Edit pipeline request."""
+    image: Optional[str] = Field(None, description="Base64 encoded image")
+    image_url: Optional[str] = Field(None, description="Image URL")
+    segmentation_prompt: str = Field(..., min_length=1, max_length=500,
+                                     description="Text prompt for SAM3 segmentation (e.g., 'person', 'car')")
+    edit_prompt: str = Field(..., min_length=1, max_length=2000,
+                            description="Edit instruction for Qwen Image Edit")
+    padding_percent: float = Field(0.25, ge=0.0, le=1.0,
+                                  description="Crop padding as % of bounding box size")
+    blend_mode: Literal["poisson", "feather"] = Field("poisson",
+                                                      description="Blending method")
+    response_format: Literal["url", "b64_json"] = Field("url")
+    guidance_scale: Optional[float] = Field(None, ge=0.0, le=20.0)
+    num_inference_steps: Optional[int] = Field(None, ge=1, le=100)
+    seed: Optional[int] = Field(None)
+
+    @model_validator(mode='after')
+    def validate_image_input(self):
+        """Ensure at least one image input is provided."""
+        if not self.image and not self.image_url:
+            raise ValueError("Either 'image' (base64) or 'image_url' must be provided")
+        return self
+
+class SAMEditResponse(BaseModel):
+    """SAM3 + Qwen Image Edit pipeline response."""
+    created: int
+    final_image: ImageData
+    intermediate_steps: Dict[str, ImageData]
+    metadata: dict
+
+# ============================================================================
 # FASTAPI APP
 # ============================================================================
 
@@ -539,10 +577,10 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("assets_directory_missing", path=ASSETS_DIR)
 
-    # Startup: load model
-    default_model = config.get("default_model", "z-image-turbo")
+    # Startup: load model (Qwen for SAM edit pipeline)
+    default_model = config.get("default_model", "qwen-image-edit")
     model_config = config.get("models", {}).get(default_model, {})
-    model_id = model_config.get("model_id", os.environ.get("MODEL_ID", "Tongyi-MAI/Z-Image-Turbo"))
+    model_id = model_config.get("model_id", os.environ.get("MODEL_ID", "Qwen/Qwen-Image-Edit-2509"))
 
     try:
         await model_manager.load_model(model_id, model_config)
@@ -564,6 +602,7 @@ app = FastAPI(
 
 # Mount static files for serving images - MUST be before middleware
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+app.mount("/results", StaticFiles(directory=RESULTS_DIR), name="results")
 
 # Add CORS
 app.add_middleware(
@@ -621,12 +660,16 @@ async def root():
             "text_to_image": "/v1/images/generations",
             "image_editing": "/v1/images/edits",
             "image_variations": "/v1/images/variations",
+            "sam_edit_pipeline": "/v1/images/sam-edit",
+            "linkedin_generation": "/v1/linkedin/generate",
             "health": "/health",
             "models": "/v1/models",
             "assets": "/assets",
+            "results": "/results",
             "list_assets": "/debug/assets"
         },
-        "assets_dir": ASSETS_DIR
+        "assets_dir": ASSETS_DIR,
+        "results_dir": RESULTS_DIR
     }
 
 @app.get("/debug/assets")
@@ -1143,6 +1186,103 @@ async def generate_linkedin_images(request: LinkedInGenerationRequest):
             status_code=500,
             detail=f"LinkedIn generation failed: {str(e)}"
         )
+
+@app.post("/v1/images/sam-edit", response_model=SAMEditResponse)
+async def sam_edit_pipeline(request: SAMEditRequest):
+    """
+    SAM3 segmentation + Qwen Image Edit pipeline.
+
+    This endpoint:
+    1. Segments object using SAM3 with text prompt
+    2. Crops masked area with padding
+    3. Edits cropped region with Qwen Image Edit
+    4. Blends edited region back into original
+    5. Saves all intermediate results
+
+    Returns final image plus all intermediate steps.
+    """
+    request_id = str(uuid.uuid4())
+
+    logger.info("sam_edit_request",
+               request_id=request_id,
+               segmentation_prompt=request.segmentation_prompt,
+               edit_prompt=request.edit_prompt[:100],
+               blend_mode=request.blend_mode)
+
+    if model_manager.inpaint_pipeline is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Qwen Image Edit model not loaded. Server may still be initializing."
+        )
+
+    start = time.time()
+    model_manager._stats["requests_total"] += 1
+
+    try:
+        # Load input image
+        logger.info("loading_input_image", request_id=request_id)
+        if request.image_url:
+            input_image = await fetch_image_from_url(request.image_url)
+        else:
+            input_image = decode_base64_image(request.image)
+
+        # Resize to valid dimensions (16-pixel divisibility for diffusion models)
+        input_image = resize_to_valid_dimensions(input_image, divisor=16)
+
+        # Initialize SAM3 model (lazy loading, singleton)
+        from pipelines.sam_model_loader import SAMModelManager
+        from pipelines.sam_edit_pipeline import SAMEditPipeline
+
+        sam_processor, sam_model, sam_device = await SAMModelManager.get_instance(
+            device=model_manager.device
+        )
+
+        # Initialize pipeline
+        pipeline = SAMEditPipeline(
+            model_manager=model_manager,
+            sam_processor=sam_processor,
+            sam_model=sam_model,
+            device=model_manager.device,
+            results_dir=RESULTS_DIR
+        )
+
+        # Process
+        result = await pipeline.process(
+            image=input_image,
+            segmentation_prompt=request.segmentation_prompt,
+            edit_prompt=request.edit_prompt,
+            padding_percent=request.padding_percent,
+            blend_mode=request.blend_mode,
+            guidance_scale=request.guidance_scale,
+            num_inference_steps=request.num_inference_steps,
+            seed=request.seed,
+            response_format=request.response_format
+        )
+
+        elapsed = time.time() - start
+        model_manager._stats["requests_success"] += 1
+        model_manager._stats["total_inference_time"] += elapsed
+
+        logger.info("sam_edit_complete",
+                   request_id=request_id,
+                   elapsed_seconds=round(elapsed, 2),
+                   folder=result["metadata"]["folder_path"])
+
+        return SAMEditResponse(**result)
+
+    except ValueError as e:
+        model_manager._stats["requests_failed"] += 1
+        logger.error("sam_edit_validation_error", request_id=request_id, error=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        model_manager._stats["requests_failed"] += 1
+        logger.error("sam_edit_failed",
+                    request_id=request_id,
+                    error=str(e),
+                    traceback=traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"SAM Edit pipeline failed: {str(e)}")
 
 @app.get("/v1/models")
 async def list_models():
