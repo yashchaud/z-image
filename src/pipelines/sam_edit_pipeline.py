@@ -1,8 +1,8 @@
 """
-SAM3 + Qwen Image Edit Pipeline.
+GroundingDINO + SAM2 + Qwen Image Edit Pipeline.
 
 5-step pipeline for segmentation-based image editing:
-1. Segment with SAM3 using text prompt
+1. Segment with GroundingDINO + SAM2 using text prompt
 2. Crop masked area with padding
 3. Edit with Qwen Image Edit
 4. Blend edited region back into original
@@ -25,30 +25,31 @@ logger = structlog.get_logger()
 
 class SAMEditPipeline:
     """
-    SAM3-based segmentation and Qwen Image Edit pipeline.
+    GroundingDINO + SAM2 based segmentation and Qwen Image Edit pipeline.
 
     Orchestrates a 5-step workflow for precise image editing:
-    - Uses SAM3 for automatic segmentation from text prompts
+    - Uses GroundingDINO for text-based object detection
+    - Uses SAM2 for precise segmentation from detected boxes
     - Crops the region with context-preserving padding
     - Edits the cropped region with Qwen Image Edit
     - Blends the edited region seamlessly back into the original
     - Saves all intermediate results for inspection
     """
 
-    def __init__(self, model_manager, sam_processor, sam_model, device: str, results_dir: str):
+    def __init__(self, model_manager, grounding_model, sam_predictor, device: str, results_dir: str):
         """
         Initialize the SAM Edit pipeline.
 
         Args:
             model_manager: ModelManager instance (for Qwen access)
-            sam_processor: Sam3Processor instance
-            sam_model: Sam3Model instance
+            grounding_model: GroundingDINO model instance
+            sam_predictor: SAM2ImagePredictor instance
             device: "cuda" or "cpu"
             results_dir: Base directory for saving results
         """
         self.model_manager = model_manager
-        self.sam_processor = sam_processor
-        self.sam_model = sam_model
+        self.grounding_model = grounding_model
+        self.sam_predictor = sam_predictor
         self.device = device
         self.results_dir = results_dir
 
@@ -103,9 +104,9 @@ class SAMEditPipeline:
         timing = {}
 
         try:
-            # STEP 1: Segment with SAM3
+            # STEP 1: Segment with GroundingDINO + SAM2
             step_start = time.time()
-            mask, bbox, confidence = await self._segment_with_sam3(
+            mask, bbox, confidence = await self._segment_with_grounding_sam2(
                 image, segmentation_prompt, request_id
             )
             timing['segmentation_ms'] = int((time.time() - step_start) * 1000)
@@ -215,14 +216,14 @@ class SAMEditPipeline:
             )
             raise
 
-    async def _segment_with_sam3(
+    async def _segment_with_grounding_sam2(
         self,
         image: Image.Image,
         prompt: str,
         request_id: str
     ) -> Tuple[np.ndarray, List[int], float]:
         """
-        Step 1: Segment image with SAM3 native API.
+        Step 1: Segment image with GroundingDINO + SAM2.
 
         Args:
             image: PIL Image
@@ -236,64 +237,121 @@ class SAMEditPipeline:
             ValueError: If no objects found matching prompt
         """
         try:
-            logger.info("sam3_segmentation_start", request_id=request_id, prompt=prompt)
+            logger.info("grounding_sam2_segmentation_start", request_id=request_id, prompt=prompt)
 
-            # Set image in processor (native SAM3 API)
-            state = self.sam_processor.set_image(image)
+            # Import required functions
+            from groundingdino.util.inference import predict as grounding_predict
+            from groundingdino.util.utils import clean_state_dict
+            import torchvision.transforms as T
+            import cv2
 
-            # Segment with text prompt (native SAM3 API)
-            output = self.sam_processor.set_text_prompt(state=state, prompt=prompt)
+            # Convert PIL to numpy for GroundingDINO
+            image_np = np.array(image)
 
-            # Extract results
-            masks = output["masks"]  # Shape: (N, H, W) - N detected objects
-            boxes = output["boxes"]  # Shape: (N, 4) - xyxy format
-            scores = output["scores"]  # Shape: (N,) - confidence scores
+            # Convert RGB to BGR for OpenCV compatibility
+            if len(image_np.shape) == 3 and image_np.shape[2] == 3:
+                image_cv = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+            else:
+                image_cv = image_np
+
+            # Run GroundingDINO detection
+            BOX_THRESHOLD = 0.35
+            TEXT_THRESHOLD = 0.25
+
+            boxes, logits, phrases = grounding_predict(
+                model=self.grounding_model,
+                image=image_cv,
+                caption=prompt,
+                box_threshold=BOX_THRESHOLD,
+                text_threshold=TEXT_THRESHOLD,
+                device=self.device
+            )
 
             # Check if any objects found
-            if len(masks) == 0:
+            if len(boxes) == 0:
                 raise ValueError(
                     f"No objects found matching segmentation prompt: '{prompt}'. "
                     f"Please try a different prompt or verify the object exists in the image."
                 )
 
-            # Use highest confidence mask
-            best_idx = int(np.argmax(scores))
-            mask = masks[best_idx]  # Binary mask (H, W)
-            bbox = boxes[best_idx].tolist()  # [x1, y1, x2, y2]
-            confidence = float(scores[best_idx])
+            # Use highest confidence detection
+            best_idx = int(torch.argmax(logits))
+            box = boxes[best_idx]  # Normalized coordinates (cx, cy, w, h)
+            confidence = float(logits[best_idx])
+
+            # Convert normalized box to xyxy pixel coordinates
+            h, w = image_np.shape[:2]
+            cx, cy, bw, bh = box
+            x1 = int((cx - bw / 2) * w)
+            y1 = int((cy - bh / 2) * h)
+            x2 = int((cx + bw / 2) * w)
+            y2 = int((cy + bh / 2) * h)
+            bbox_xyxy = [x1, y1, x2, y2]
+
+            logger.info(
+                "grounding_dino_detection",
+                request_id=request_id,
+                num_detections=len(boxes),
+                selected_confidence=confidence,
+                bbox=bbox_xyxy
+            )
+
+            # Run SAM2 segmentation with detected box
+            self.sam_predictor.set_image(image_np)
+
+            # Prepare box input for SAM2 (xyxy format)
+            input_box = np.array(bbox_xyxy)
+
+            masks, scores, logits_sam = self.sam_predictor.predict(
+                point_coords=None,
+                point_labels=None,
+                box=input_box[None, :],  # Add batch dimension
+                multimask_output=True  # Get multiple mask proposals
+            )
+
+            # Use the mask with highest IoU score
+            best_mask_idx = int(np.argmax(scores))
+            mask = masks[best_mask_idx]  # Binary mask (H, W)
+
+            logger.info(
+                "sam2_segmentation_complete",
+                request_id=request_id,
+                num_mask_proposals=len(masks),
+                selected_mask_score=float(scores[best_mask_idx])
+            )
 
             # Log selection if multiple objects found
-            if len(masks) > 1:
+            if len(boxes) > 1:
                 logger.info(
-                    "sam3_multiple_objects_found",
+                    "grounding_multiple_objects_found",
                     request_id=request_id,
-                    num_objects=len(masks),
+                    num_objects=len(boxes),
                     selected_index=best_idx,
                     selected_confidence=confidence,
-                    all_confidences=[float(s) for s in scores]
+                    all_confidences=[float(s) for s in logits]
                 )
 
             # Warn if low confidence
             if confidence < 0.3:
                 logger.warning(
-                    "sam3_low_confidence",
+                    "grounding_low_confidence",
                     request_id=request_id,
                     confidence=confidence,
                     prompt=prompt
                 )
 
             logger.info(
-                "sam3_segmentation_complete",
+                "grounding_sam2_complete",
                 request_id=request_id,
                 confidence=confidence,
-                bbox=bbox
+                bbox=bbox_xyxy
             )
 
-            return mask, bbox, confidence
+            return mask, bbox_xyxy, confidence
 
         except Exception as e:
             logger.error(
-                "sam3_segmentation_failed",
+                "grounding_sam2_segmentation_failed",
                 request_id=request_id,
                 error=str(e)
             )

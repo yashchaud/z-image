@@ -1229,19 +1229,19 @@ async def sam_edit_pipeline(request: SAMEditRequest):
         # Resize to valid dimensions (16-pixel divisibility for diffusion models)
         input_image = resize_to_valid_dimensions(input_image, divisor=16)
 
-        # Initialize SAM3 model (lazy loading, singleton)
+        # Initialize GroundingDINO + SAM2 models (lazy loading, singleton)
         from pipelines.sam_model_loader import SAMModelManager
         from pipelines.sam_edit_pipeline import SAMEditPipeline
 
-        sam_processor, sam_model, sam_device = await SAMModelManager.get_instance(
+        grounding_model, sam_predictor, _ = await SAMModelManager.get_instance(
             device=model_manager.device
         )
 
         # Initialize pipeline
         pipeline = SAMEditPipeline(
             model_manager=model_manager,
-            sam_processor=sam_processor,
-            sam_model=sam_model,
+            grounding_model=grounding_model,
+            sam_predictor=sam_predictor,
             device=model_manager.device,
             results_dir=RESULTS_DIR
         )
