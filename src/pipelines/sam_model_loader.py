@@ -83,7 +83,7 @@ class SAMModelManager:
             logger.info("sam3_model_loading_start", device=device)
 
             # Import from transformers
-            from transformers import Sam3Processor, Sam3Model
+            from transformers import AutoProcessor, AutoModel
             import torch
 
             # Get HF token from environment
@@ -91,16 +91,18 @@ class SAMModelManager:
 
             logger.info("sam3_loading_from_transformers", repo="facebook/sam3", has_token=bool(hf_token))
 
-            # Load processor
-            self._processor = Sam3Processor.from_pretrained(
+            # Load processor using AutoProcessor (works across transformers versions)
+            self._processor = AutoProcessor.from_pretrained(
                 "facebook/sam3",
-                token=hf_token
+                token=hf_token,
+                trust_remote_code=True
             )
 
-            # Load model
-            self._model = Sam3Model.from_pretrained(
+            # Load model using AutoModel (works across transformers versions)
+            self._model = AutoModel.from_pretrained(
                 "facebook/sam3",
-                token=hf_token
+                token=hf_token,
+                trust_remote_code=True
             ).to(device)
 
             self._device = device
@@ -108,7 +110,7 @@ class SAMModelManager:
             logger.info(
                 "sam3_model_loaded_successfully",
                 device=device,
-                model_type="transformers_sam3"
+                model_type="transformers_sam3_auto"
             )
 
         except ImportError as e:
