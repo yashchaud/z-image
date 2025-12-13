@@ -12,7 +12,7 @@ import traceback
 import uuid
 import inspect
 from io import BytesIO
-from typing import Optional, List, Literal, Union
+from typing import Optional, List, Literal, Union, Dict
 from contextlib import asynccontextmanager
 
 import torch
@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 import structlog
 from dotenv import load_dotenv
 
