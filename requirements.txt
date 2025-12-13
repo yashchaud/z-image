@@ -31,4 +31,7 @@ hf_transfer
 # SAM3 and image processing
 opencv-python>=4.8.0
 scipy>=1.11.0
+einops>=0.6.0
 sam3 @ git+https://github.com/facebookresearch/sam3.git
+decord
+pycocotools
