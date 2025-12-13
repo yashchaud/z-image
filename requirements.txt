@@ -1,6 +1,6 @@
 # Core FastFusion/Diffusers stack
 torch>=2.1.0
-diffusers>=0.31.0
+diffusers @ git+https://github.com/huggingface/diffusers
 transformers @ git+https://github.com/huggingface/transformers
 accelerate
 safetensors
