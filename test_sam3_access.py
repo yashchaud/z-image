@@ -34,28 +34,43 @@ except Exception as e:
     print("   Click 'Request access' and wait for approval")
     exit(1)
 
-# Try downloading model.safetensors
-print("\n⬇️  Attempting to download model.safetensors...")
+# Try downloading with snapshot_download (better for gated models)
+print("\n⬇️  Attempting to download using snapshot_download...")
 try:
-    checkpoint_path = hf_hub_download(
+    from huggingface_hub import snapshot_download
+
+    repo_path = snapshot_download(
         repo_id="facebook/sam3",
-        filename="model.safetensors",
-        token=hf_token
+        token=hf_token,
+        allow_patterns=["model.safetensors"]
     )
+    checkpoint_path = os.path.join(repo_path, "model.safetensors")
+
     print(f"✅ SUCCESS! Model downloaded to: {checkpoint_path}")
 
     # Check file size
-    import os
     file_size_gb = os.path.getsize(checkpoint_path) / (1024**3)
     print(f"   File size: {file_size_gb:.2f} GB")
 
 except Exception as e:
     print(f"❌ ERROR downloading: {e}")
-    print("\n⚠️  Your account may not have been approved yet for SAM3 access")
-    print("   1. Visit: https://huggingface.co/facebook/sam3")
-    print("   2. Check if you see a 'Request access' button")
-    print("   3. If yes, click it and wait for Meta to approve (usually instant)")
-    print("   4. If no button, check your email for approval status")
-    exit(1)
+    print(f"   Error type: {type(e).__name__}")
+
+    print("\n🔍 Trying alternative: Direct hf_hub_download...")
+    try:
+        checkpoint_path = hf_hub_download(
+            repo_id="facebook/sam3",
+            filename="model.safetensors",
+            token=hf_token,
+            force_download=True
+        )
+        print(f"✅ Alternative worked! Downloaded to: {checkpoint_path}")
+    except Exception as e2:
+        print(f"❌ Alternative also failed: {e2}")
+        print("\n⚠️  Possible issues:")
+        print("   1. Token may need 'write' permission (regenerate with write access)")
+        print("   2. May need to accept Meta's license agreement on the model page")
+        print("   3. Visit: https://huggingface.co/facebook/sam3 and check for agreement popup")
+        exit(1)
 
 print("\n🎉 All checks passed! SAM3 should work now.")

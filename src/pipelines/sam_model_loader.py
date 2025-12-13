@@ -97,17 +97,37 @@ class SAMModelManager:
             else:
                 logger.warning("sam3_no_hf_token", message="No HF_TOKEN found in environment")
 
-            # Download model checkpoint from Hugging Face
-            from huggingface_hub import hf_hub_download
+            # Download model checkpoint from Hugging Face using snapshot_download
+            from huggingface_hub import snapshot_download
+            import traceback
 
             logger.info("sam3_downloading_checkpoint", repo="facebook/sam3")
-            checkpoint_path = hf_hub_download(
-                repo_id="facebook/sam3",
-                filename="model.safetensors",
-                token=hf_token
-            )
 
-            logger.info("sam3_checkpoint_downloaded", path=checkpoint_path)
+            try:
+                # Download entire repo snapshot (includes model, config, tokenizer)
+                cache_dir = os.environ.get("HF_HOME", "./models/sam3")
+
+                repo_path = snapshot_download(
+                    repo_id="facebook/sam3",
+                    token=hf_token,
+                    cache_dir=cache_dir,
+                    allow_patterns=["model.safetensors", "config.json", "processor_config.json",
+                                   "tokenizer.json", "vocab.json", "merges.txt",
+                                   "special_tokens_map.json", "tokenizer_config.json"]
+                )
+
+                # Construct path to model file
+                checkpoint_path = os.path.join(repo_path, "model.safetensors")
+
+                logger.info("sam3_checkpoint_downloaded", path=checkpoint_path, repo_path=repo_path)
+            except Exception as download_error:
+                logger.error(
+                    "sam3_download_failed",
+                    error=str(download_error),
+                    error_type=type(download_error).__name__,
+                    traceback=traceback.format_exc()
+                )
+                raise
 
             # Load model with native SAM3 builder from downloaded checkpoint
             logger.info("sam3_loading_native_model", device=device)
