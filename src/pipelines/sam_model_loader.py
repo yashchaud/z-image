@@ -91,18 +91,16 @@ class SAMModelManager:
 
             logger.info("sam3_loading_from_transformers", repo="facebook/sam3", has_token=bool(hf_token))
 
-            # Load processor using AutoProcessor (works across transformers versions)
+            # Load processor - transformers main branch has SAM3 support
             self._processor = AutoProcessor.from_pretrained(
                 "facebook/sam3",
-                token=hf_token,
-                trust_remote_code=True
+                token=hf_token
             )
 
-            # Load model using AutoModel (works across transformers versions)
+            # Load model - transformers main branch has SAM3 support
             self._model = AutoModel.from_pretrained(
                 "facebook/sam3",
-                token=hf_token,
-                trust_remote_code=True
+                token=hf_token
             ).to(device)
 
             self._device = device

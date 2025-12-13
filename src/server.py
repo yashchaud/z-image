@@ -39,6 +39,22 @@ except ImportError:
 load_dotenv()
 
 # ============================================================================
+# TRANSFORMERS 5.x COMPATIBILITY PATCH
+# ============================================================================
+# MT5Tokenizer was renamed to MT5TokenizerFast in transformers 5.x
+# This patch ensures diffusers HunyuanDiT pipeline can still import it
+try:
+    from transformers import MT5Tokenizer
+except ImportError:
+    try:
+        from transformers import MT5TokenizerFast
+        import transformers
+        # Create alias for backward compatibility
+        transformers.MT5Tokenizer = MT5TokenizerFast
+    except ImportError:
+        pass  # If neither exists, diffusers will handle the error
+
+# ============================================================================
 # CONSTANTS
 # ============================================================================
 
