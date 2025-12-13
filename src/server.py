@@ -39,22 +39,6 @@ except ImportError:
 load_dotenv()
 
 # ============================================================================
-# TRANSFORMERS 5.x COMPATIBILITY PATCH
-# ============================================================================
-# MT5Tokenizer was renamed to MT5TokenizerFast in transformers 5.x
-# This patch ensures diffusers HunyuanDiT pipeline can still import it
-try:
-    from transformers import MT5Tokenizer
-except ImportError:
-    try:
-        from transformers import MT5TokenizerFast
-        import transformers
-        # Create alias for backward compatibility
-        transformers.MT5Tokenizer = MT5TokenizerFast
-    except ImportError:
-        pass  # If neither exists, diffusers will handle the error
-
-# ============================================================================
 # CONSTANTS
 # ============================================================================
 
@@ -1245,19 +1229,16 @@ async def sam_edit_pipeline(request: SAMEditRequest):
         # Resize to valid dimensions (16-pixel divisibility for diffusion models)
         input_image = resize_to_valid_dimensions(input_image, divisor=16)
 
-        # Initialize SAM3 model (lazy loading, singleton)
-        from pipelines.sam_model_loader import SAMModelManager
+        # Initialize SAM3 API client (calls external microservice)
+        from pipelines.sam_api_client import SAM3APIClient
         from pipelines.sam_edit_pipeline import SAMEditPipeline
 
-        sam_processor, sam_model, _ = await SAMModelManager.get_instance(
-            device=model_manager.device
-        )
+        sam_api_client = SAM3APIClient()
 
         # Initialize pipeline
         pipeline = SAMEditPipeline(
             model_manager=model_manager,
-            sam_processor=sam_processor,
-            sam_model=sam_model,
+            sam_api_client=sam_api_client,
             device=model_manager.device,
             results_dir=RESULTS_DIR
         )

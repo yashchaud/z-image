@@ -25,30 +25,28 @@ logger = structlog.get_logger()
 
 class SAMEditPipeline:
     """
-    SAM3-based segmentation and Qwen Image Edit pipeline.
+    SAM3 API + Qwen Image Edit pipeline.
 
     Orchestrates a 5-step workflow for precise image editing:
-    - Uses SAM3 for automatic segmentation from text prompts
+    - Calls external SAM3 API for automatic segmentation from text prompts
     - Crops the region with context-preserving padding
     - Edits the cropped region with Qwen Image Edit
     - Blends the edited region seamlessly back into the original
     - Saves all intermediate results for inspection
     """
 
-    def __init__(self, model_manager, sam_processor, sam_model, device: str, results_dir: str):
+    def __init__(self, model_manager, sam_api_client, device: str, results_dir: str):
         """
         Initialize the SAM Edit pipeline.
 
         Args:
             model_manager: ModelManager instance (for Qwen access)
-            sam_processor: Sam3Processor instance
-            sam_model: Sam3Model instance
+            sam_api_client: SAM3APIClient instance for segmentation
             device: "cuda" or "cpu"
             results_dir: Base directory for saving results
         """
         self.model_manager = model_manager
-        self.sam_processor = sam_processor
-        self.sam_model = sam_model
+        self.sam_api_client = sam_api_client
         self.device = device
         self.results_dir = results_dir
 
@@ -222,7 +220,7 @@ class SAMEditPipeline:
         request_id: str
     ) -> Tuple[np.ndarray, List[int], float]:
         """
-        Step 1: Segment image with SAM3 native API.
+        Step 1: Segment image with SAM3 API.
 
         Args:
             image: PIL Image
@@ -236,56 +234,48 @@ class SAMEditPipeline:
             ValueError: If no objects found matching prompt
         """
         try:
-            logger.info("sam3_segmentation_start", request_id=request_id, prompt=prompt)
+            logger.info("sam3_api_segmentation_start", request_id=request_id, prompt=prompt)
 
-            import torch
-
-            # Prepare inputs using transformers processor API
-            inputs = self.sam_processor(
-                images=image,
-                text=prompt,
-                return_tensors="pt"
-            ).to(self.device)
-
-            # Run model inference
-            with torch.no_grad():
-                outputs = self.sam_model(**inputs)
-
-            # Post-process results
-            results = self.sam_processor.post_process_instance_segmentation(
-                outputs,
+            # Call external SAM3 API
+            result = await self.sam_api_client.segment(
+                image=image,
+                text_prompt=prompt,
                 threshold=0.5,
-                mask_threshold=0.5,
-                target_sizes=inputs.get("original_sizes").tolist()
-            )[0]
+                mask_threshold=0.5
+            )
 
-            # Extract results
-            masks = results["masks"]  # List of binary masks (H, W)
-            boxes = results["boxes"]  # Tensor of boxes in xyxy format
-            scores = results["scores"]  # Tensor of confidence scores
+            # Extract results from API response
+            masks_b64 = result["masks"]  # List of base64-encoded mask PNGs
+            boxes = result["boxes"]  # List of [x1, y1, x2, y2]
+            scores = result["scores"]  # List of confidence scores
+            count = result["count"]
 
             # Check if any objects found
-            if len(masks) == 0:
+            if count == 0:
                 raise ValueError(
                     f"No objects found matching segmentation prompt: '{prompt}'. "
                     f"Please try a different prompt or verify the object exists in the image."
                 )
 
             # Use highest confidence mask
-            best_idx = int(torch.argmax(scores))
-            mask = masks[best_idx].cpu().numpy()  # Binary mask (H, W)
-            bbox = boxes[best_idx].cpu().numpy().tolist()  # [x1, y1, x2, y2]
+            best_idx = int(np.argmax(scores))
+
+            # Decode mask from base64
+            mask_image = self.sam_api_client.decode_mask(masks_b64[best_idx])
+            mask = np.array(mask_image) > 0  # Convert to boolean mask
+
+            bbox = boxes[best_idx]  # [x1, y1, x2, y2]
             confidence = float(scores[best_idx])
 
             # Log selection if multiple objects found
-            if len(masks) > 1:
+            if count > 1:
                 logger.info(
                     "sam3_multiple_objects_found",
                     request_id=request_id,
-                    num_objects=len(masks),
+                    num_objects=count,
                     selected_index=best_idx,
                     selected_confidence=confidence,
-                    all_confidences=[float(s) for s in scores]
+                    all_confidences=scores
                 )
 
             # Warn if low confidence
@@ -298,7 +288,7 @@ class SAMEditPipeline:
                 )
 
             logger.info(
-                "sam3_segmentation_complete",
+                "sam3_api_segmentation_complete",
                 request_id=request_id,
                 confidence=confidence,
                 bbox=bbox
@@ -308,7 +298,7 @@ class SAMEditPipeline:
 
         except Exception as e:
             logger.error(
-                "sam3_segmentation_failed",
+                "sam3_api_segmentation_failed",
                 request_id=request_id,
                 error=str(e)
             )
